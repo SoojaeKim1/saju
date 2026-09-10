@@ -1,4 +1,6 @@
 // Saju (Four Pillars) deterministic calculation API
+// Deterministic calculation ONLY — interpretation belongs to the LLM layer downstream.
+//
 // POST /calculate-saju
 // { "name": "홍길동", "gender": "male"|"female", "calendar": "solar",
 //   "birth_date": "1990-05-15", "birth_time": "14:30", "birth_place": "Seoul", "timezone": "Asia/Seoul" }
@@ -25,6 +27,13 @@ function countFiveElements(pillars) {
     counts[ELEMENT_OF_ZHI[p.zhi]]++;
   }
   return counts;
+}
+
+// Parse "YYYY-MM-DD HH:mm:ss" into epoch ms (treated as local civil time)
+function parseYmdHms(s) {
+  const m = s.match(/(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])).getTime();
 }
 
 app.get('/health', (req, res) => res.json({ ok: true }));
@@ -72,15 +81,18 @@ app.post('/calculate-saju', (req, res) => {
       pillar: dy.getGanZhi() || '(대운 시작 전)',
     }));
 
+    // ---- edge-case warnings ----
     const warnings = [];
     if (hh === 23 || hh === 0) {
       warnings.push('자시(23:00–00:59) 출생: 일주 기준이 학파에 따라 달라질 수 있습니다(야자시/조자시).');
     }
+    // 절기 경계 근접 여부 (월주/연주 기준)
     const jieQi = lunar.getJieQiTable();
-    const birth = solar.getCalendar().getTime();
+    const birthMs = new Date(y, m - 1, d, hh, mm, 0).getTime();
     for (const k of Object.keys(jieQi)) {
-      const diffH = Math.abs(jieQi[k].getCalendar().getTime() - birth) / 36e5;
-      if (diffH <= 24) {
+      const jqMs = jieQi[k] && typeof jieQi[k].toYmdHms === 'function' ? parseYmdHms(jieQi[k].toYmdHms()) : null;
+      if (jqMs == null) continue;
+      if (Math.abs(jqMs - birthMs) / 36e5 <= 24) {
         warnings.push('절기(' + k + ') 경계 ±24시간 이내 출생: 월주/연주가 경계에서 달라질 수 있습니다.');
         break;
       }
